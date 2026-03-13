@@ -18,6 +18,7 @@
 ## 🎯 Features
 
 - 🤖 **AI-Powered Predictions** - XGBoost machine learning model with 60-65% accuracy
+- 🏆 **Elo Rating System** - Historical Elo ratings calculated for all 2,603 fighters based on fight outcomes
 - ⚖️ **Weight Class Validation** - Prevents unrealistic matchups between distant weight classes
 - 📊 **Detailed Analysis** - Physical advantages, striking stats, grappling stats, and win rates
 - 🔍 **Fighter Search** - Quick search through the entire UFC fighter database
@@ -168,7 +169,8 @@ The system **prevents unrealistic matchups** by enforcing UFC rules:
 | **Accuracy** | 60-65% |
 | **AUC-ROC** | 0.60-0.65 |
 | **Features** | 39 (physical, striking, grappling, engineered) |
-| **Training Data** | UFC fights (1994-2025) |
+| **Training Data** | 8,190 UFC fights (1994-2025) |
+| **Latest Event** | UFC Fight Night: Imavov vs. Borralho (September 6, 2025) |
 
 ### Feature Categories
 
@@ -176,6 +178,7 @@ The system **prevents unrealistic matchups** by enforcing UFC rules:
 2. **Striking Stats**: Strikes per minute, accuracy, defense
 3. **Grappling Stats**: Takedowns, accuracy, defense
 4. **Engineered Features**: Win rate, stat differences, advantages
+5. **Elo Ratings**: Historical performance-based ratings (available via calculate_elo.py)
 
 ### Top Important Features
 
@@ -219,6 +222,7 @@ ufc_analysis/
 ├── 📄 test_predictions.py       # Interactive prediction system
 ├── 📄 train_xgboost.py          # XGBoost model training
 ├── 📄 train_model.py            # Random Forest training (alternative)
+├── 📄 calculate_elo.py          # Elo rating system calculator
 ├── 📄 predict_matchup.py        # Example predictions
 ├── 📄 run_tests.py              # Automated test suite
 ├── 📄 download_dataset.py       # Dataset downloader
@@ -226,6 +230,9 @@ ufc_analysis/
 ├── 📄 test_quick.bat            # Quick test script (Windows)
 ├── 🤖 ufc_xgboost_model.pkl    # Trained XGBoost model
 ├── 🤖 ufc_model.pkl             # Trained Random Forest model
+├── 📊 data/
+│   ├── fighter_elo_ratings.csv  # Current Elo ratings for all fighters
+│   └── elo_history.csv          # Complete Elo history per fight
 ├── 📖 README.md                 # This file
 ├── 📖 WEIGHT_CLASS_VALIDATION.md # Weight class documentation
 ├── 📖 MODEL_OVERCONFIDENCE.md   # Model calibration guide
@@ -273,8 +280,47 @@ The model tends to be overconfident in predictions:
 
 ---
 
+## 🏆 Elo Rating System
+
+### Calculate Fighter Elo Ratings
+
+```bash
+python calculate_elo.py
+```
+
+The Elo rating system provides a dynamic skill rating for each fighter based on their complete fight history:
+
+- **2,603 fighters** rated across **8,190 fights**
+- **K-factor**: 32 (standard chess rating)
+- **Initial rating**: 1,500 for all fighters
+- **Top rated**: Jon Jones (1,775), Georges St-Pierre (1,747), Islam Makhachev (1,729)
+
+### Using Elo in Your Code
+
+```python
+from calculate_elo import calculate_elo_ratings, get_fighter_elo, get_top_fighters_by_elo
+
+# Calculate all Elo ratings
+elo_ratings, elo_history = calculate_elo_ratings('path/to/UFC.csv')
+
+# Get specific fighter's Elo
+jon_jones_elo = get_fighter_elo('Jon Jones', elo_ratings)
+
+# Get top 20 fighters
+top_fighters = get_top_fighters_by_elo(elo_ratings, top_n=20)
+```
+
+### Elo Output Files
+
+- `data/fighter_elo_ratings.csv` - Current Elo rating for each fighter
+- `data/elo_history.csv` - Complete history of Elo changes per fight
+
+---
+
 ## 🚧 Future Improvements
 
+- [x] Elo rating system implementation
+- [ ] Integrate Elo ratings as model features
 - [ ] Probability calibration for realistic confidence levels
 - [ ] Add fighter age and experience features
 - [ ] Implement neural network models
