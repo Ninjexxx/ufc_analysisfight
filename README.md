@@ -354,8 +354,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Arthur Santos**
 
-- GitHub: [@yourusername](https://github.com/Ninjexxx)
-- LinkedIn: [Your LinkedIn](https://linkedin.com/in/artsantos0202)
+- GitHub: [@Ninjexxx](https://github.com/Ninjexxx)
+- LinkedIn: [Arthur Santos](https://linkedin.com/in/artsantos0202)
 
 ---
 
