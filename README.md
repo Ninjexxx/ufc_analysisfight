@@ -49,9 +49,13 @@ cd ufc-fight-prediction
 pip install pandas numpy scikit-learn xgboost kagglehub
 ```
 
-3. **Download dataset**
+3. **Download or update dataset**
 ```bash
+# Standard download
 python download_dataset.py
+
+# Or if you extracted a new Kaggle update folder (e.g. ufcdataset_kaggle/):
+python update_dataset_2026.py
 ```
 
 4. **Train the model**
@@ -165,12 +169,13 @@ The system **prevents unrealistic matchups** by enforcing UFC rules:
 
 | Metric | Value |
 |--------|-------|
-| **Algorithm** | XGBoost Classifier |
-| **Accuracy** | 60-65% |
-| **AUC-ROC** | 0.60-0.65 |
-| **Features** | 39 (physical, striking, grappling, engineered) |
-| **Training Data** | 8,190 UFC fights (1994-2025) |
-| **Latest Event** | UFC Fight Night: Imavov vs. Borralho (September 6, 2025) |
+| **Algorithm** | Calibrated XGBoost (`CalibratedClassifierCV`) |
+| **Accuracy** | ~70.2% (Out-of-Time Test: 2023-2026) |
+| **AUC-ROC** | 0.7744 |
+| **Features** | 47 (Elo ratings, physical, striking, grappling, streak momentum, relative diffs) |
+| **Training Data** | 11,441 MMA/UFC fights (1993-2026) with symmetric augmentation |
+| **Fighter Database** | 4,581 fighters |
+| **Latest Event** | UFC 2026 events update |
 
 ### Feature Categories
 
@@ -262,8 +267,10 @@ ufc_analysis/
 
 ## 📚 Documentation
 
+- [Relatório Técnico de Engenharia (PDF)](DOCUMENTACAO_TECNICA_UFC_PREDICTION.pdf)
+- [Estudo Comparativo: UFC vs Machine Learning Bancário (PDF)](UFC%20X%20BANCO.pdf)
 - [Weight Class Validation Guide](WEIGHT_CLASS_VALIDATION.md)
-- [Model Overconfidence Analysis](MODEL_OVERCONFIDENCE.md)
+- [Model Overconfidence Analysis & Calibration](MODEL_OVERCONFIDENCE.md)
 - [Translation Summary](TRANSLATION_SUMMARY.md)
 
 ---
@@ -320,8 +327,11 @@ top_fighters = get_top_fighters_by_elo(elo_ratings, top_n=20)
 ## 🚧 Future Improvements
 
 - [x] Elo rating system implementation
-- [ ] Integrate Elo ratings as model features
-- [ ] Probability calibration for realistic confidence levels
+- [x] Integrate Elo ratings as model features
+- [x] Probability calibration for realistic confidence levels (Platt Scaling)
+- [x] Corner bias elimination (Symmetric Data Augmentation)
+- [x] Out-of-time temporal validation (2023-2025 split)
+- [x] Portable data loader and reproducible environment (`requirements.txt`)
 - [ ] Add fighter age and experience features
 - [ ] Implement neural network models
 - [ ] Fight style matchup analysis

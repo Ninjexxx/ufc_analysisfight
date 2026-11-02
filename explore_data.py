@@ -1,19 +1,14 @@
 import pandas as pd
-import os
+from data_loader import ensure_data
 
-data_path = r"C:\Users\Arthur Santos\.cache\kagglehub\datasets\neelagiriaditya\ufc-datasets-1994-2025\versions\3"
+paths = ensure_data()
 
-files = ['event_details.csv', 'fight_details.csv', 'fighter_details.csv', 'UFC.csv']
-
-for file in files:
-    filepath = os.path.join(data_path, file)
+for name, filepath in paths.items():
     df = pd.read_csv(filepath)
     print(f"\n{'='*60}")
-    print(f"File: {file}")
+    print(f"File: {name} ({filepath})")
     print(f"{'='*60}")
     print(f"Shape: {df.shape}")
-    print(f"\nColumns:\n{df.columns.tolist()}")
+    print(f"\nColumns ({len(df.columns)}):\n{df.columns.tolist()[:15]}...")
     print(f"\nFirst rows:")
-    print(df.head(3))
-    print(f"\nInfo:")
-    print(df.info())
+    print(df.head(2))

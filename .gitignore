@@ -39,6 +39,7 @@ ENV/
 # Data files (large datasets)
 *.csv
 data/
+ufcdataset_kaggle/
 *.zip
 *.tar.gz
 

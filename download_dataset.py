@@ -1,6 +1,8 @@
-import kagglehub
+from data_loader import ensure_data
 
-# Download latest version
-path = kagglehub.dataset_download("neelagiriaditya/ufc-datasets-1994-2025")
-
-print("Path to dataset files:", path)
+if __name__ == "__main__":
+    print("Baixando e sincronizando dataset para ./data...")
+    paths = ensure_data()
+    print("Dataset pronto para uso:")
+    for key, path in paths.items():
+        print(f"  {key}: {path}")

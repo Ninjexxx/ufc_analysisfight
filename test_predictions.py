@@ -1,12 +1,31 @@
-import pandas as pd
+import os
 import pickle
 import numpy as np
+import pandas as pd
 
-# Load XGBoost model and data
-with open('ufc_xgboost_model.pkl', 'rb') as f:
+from data_loader import load_fighters_df, ensure_data
+from calculate_elo import calculate_elo_ratings, get_fighter_elo
+from feature_engineering import extract_matchup_features
+
+# 1. Carregamento do modelo XGBoost calibrado
+MODEL_PATH = 'ufc_xgboost_model.pkl'
+if not os.path.exists(MODEL_PATH):
+    from train_xgboost import train_and_evaluate
+    print("Modelo 'ufc_xgboost_model.pkl' não encontrado. Treinando automaticamente...")
+    train_and_evaluate()
+
+with open(MODEL_PATH, 'rb') as f:
     model = pickle.load(f)
 
-fighters_df = pd.read_csv(r"C:\Users\Arthur Santos\.cache\kagglehub\datasets\neelagiriaditya\ufc-datasets-1994-2025\versions\3\fighter_details.csv")
+# 2. Carregamento dos lutadores e ratings Elo
+fighters_df = load_fighters_df()
+
+ELO_CSV = os.path.join('data', 'fighter_elo_ratings.csv')
+if os.path.exists(ELO_CSV):
+    elo_df = pd.read_csv(ELO_CSV)
+    elo_ratings = dict(zip(elo_df['fighter'], elo_df['elo_rating']))
+else:
+    elo_ratings, _, _ = calculate_elo_ratings()
 
 # UFC Weight Classes (in kg)
 WEIGHT_CLASSES = {
@@ -22,17 +41,24 @@ WEIGHT_CLASSES = {
 }
 
 def get_weight_class(weight):
-    """Returns the fighter's weight class"""
+    """Retorna a categoria de peso do lutador."""
+    if pd.isna(weight):
+        return 'Unknown'
     for class_name, (min_w, max_w) in WEIGHT_CLASSES.items():
         if min_w <= weight <= max_w:
             return class_name
     return 'Heavyweight'
 
 def weight_classes_compatible(weight1, weight2, max_diff=1):
-    """Checks if two weights are in compatible categories (max 1 category difference)"""
+    """Verifica se os pesos estão em categorias compatíveis (máximo 1 categoria de diferença)."""
+    if pd.isna(weight1) or pd.isna(weight2):
+        return True
     classes = list(WEIGHT_CLASSES.keys())
     class1 = get_weight_class(weight1)
     class2 = get_weight_class(weight2)
+    
+    if class1 not in classes or class2 not in classes:
+        return True
     
     idx1 = classes.index(class1)
     idx2 = classes.index(class2)
@@ -40,159 +66,157 @@ def weight_classes_compatible(weight1, weight2, max_diff=1):
     return abs(idx1 - idx2) <= max_diff
 
 def predict_fight(fighter1_name, fighter2_name):
-    """Predicts the outcome of a fight between two fighters"""
-    
-    # Search for fighters
+    """Prediz o resultado da luta entre dois lutadores usando o modelo XGBoost calibrado com Elo."""
     f1 = fighters_df[fighters_df['name'].str.contains(fighter1_name, case=False, na=False)]
     f2 = fighters_df[fighters_df['name'].str.contains(fighter2_name, case=False, na=False)]
     
     if f1.empty:
-        print(f"Fighter '{fighter1_name}' not found!")
-        return
+        print(f"Lutador '{fighter1_name}' não encontrado!")
+        return None
     if f2.empty:
-        print(f"Fighter '{fighter2_name}' not found!")
-        return
+        print(f"Lutador '{fighter2_name}' não encontrado!")
+        return None
     
     f1 = f1.iloc[0]
     f2 = f2.iloc[0]
     
-    # Validate weight class compatibility
     class1 = get_weight_class(f1['weight'])
     class2 = get_weight_class(f2['weight'])
     
+    # Validação de categoria de peso
     if not weight_classes_compatible(f1['weight'], f2['weight']):
         print(f"\n{'='*60}")
-        print(f"WARNING: INVALID FIGHT")
+        print("AVISO: LUTA INVÁLIDA (DIFERENÇA DE CATEGORIA EXCESSIVA)")
         print(f"{'='*60}")
         print(f"\n{f1['name']} ({f1['weight']:.1f}kg - {class1})")
-        print(f"  vs")
+        print("  vs")
         print(f"{f2['name']} ({f2['weight']:.1f}kg - {class2})")
-        print(f"\nThis fight is not realistic!")
-        print(f"The weight difference is too large: {abs(f1['weight'] - f2['weight']):.1f}kg")
-        print(f"\nThe UFC does not allow fights with more than 1 weight class difference.")
-        print(f"Choose fighters from the same category or adjacent categories.")
+        print(f"\nA diferença de peso é de {abs(f1['weight'] - f2['weight']):.1f}kg.")
+        print("O UFC não permite lutas com mais de 1 divisão de diferença.")
         print(f"{'='*60}\n")
-        return
+        return None
     
-    # Calculate win rates
-    r_win_rate = f1['wins'] / (f1['wins'] + f1['losses'] + 1)
-    b_win_rate = f2['wins'] / (f2['wins'] + f2['losses'] + 1)
+    elo1 = get_fighter_elo(f1['name'], elo_ratings)
+    elo2 = get_fighter_elo(f2['name'], elo_ratings)
+    strk1 = int(f1.get('streak', 0))
+    strk2 = int(f2.get('streak', 0))
     
-    # Prepare features (same as training)
-    features = {
-        'r_wins': f1['wins'], 'r_losses': f1['losses'],
-        'r_height': f1['height'], 'r_weight': f1['weight'], 'r_reach': f1['reach'],
-        'r_splm': f1['splm'], 'r_str_acc': f1['str_acc'], 'r_sapm': f1['sapm'],
-        'r_str_def': f1['str_def'], 'r_td_avg': f1['td_avg'],
-        'r_td_avg_acc': f1['td_avg_acc'], 'r_td_def': f1['td_def'], 'r_sub_avg': f1['sub_avg'],
-        'b_wins': f2['wins'], 'b_losses': f2['losses'],
-        'b_height': f2['height'], 'b_weight': f2['weight'], 'b_reach': f2['reach'],
-        'b_splm': f2['splm'], 'b_str_acc': f2['str_acc'], 'b_sapm': f2['sapm'],
-        'b_str_def': f2['str_def'], 'b_td_avg': f2['td_avg'],
-        'b_td_avg_acc': f2['td_avg_acc'], 'b_td_def': f2['td_def'], 'b_sub_avg': f2['sub_avg'],
-        # Engineered features
-        'win_diff': f1['wins'] - f2['wins'],
-        'loss_diff': f1['losses'] - f2['losses'],
-        'height_diff': f1['height'] - f2['height'],
-        'reach_diff': f1['reach'] - f2['reach'],
-        'weight_diff': f1['weight'] - f2['weight'],
-        'r_win_rate': r_win_rate,
-        'b_win_rate': b_win_rate,
-        'win_rate_diff': r_win_rate - b_win_rate,
-        'str_acc_diff': f1['str_acc'] - f2['str_acc'],
-        'str_def_diff': f1['str_def'] - f2['str_def'],
-        'td_avg_diff': f1['td_avg'] - f2['td_avg'],
-        'td_def_diff': f1['td_def'] - f2['td_def'],
-        'splm_diff': f1['splm'] - f2['splm'],
-        'sapm_diff': f1['sapm'] - f2['sapm']
-    }
+    # Extrai o vetor de 47 atributos padronizado
+    X = extract_matchup_features(f1, f2, elo1, elo2, streak1=strk1, streak2=strk2)
     
-    X = pd.DataFrame([features])
-    
-    # Prediction
-    prob = model.predict_proba(X)[0]
+    # Predição com modelo calibrado
+    prob = model.predict_proba(X)[0] # [P(f2 vence), P(f1 vence)]
     winner_idx = np.argmax(prob)
     winner = f1['name'] if winner_idx == 1 else f2['name']
     confidence = prob[winner_idx] * 100
     
-    # Display result
+    def format_streak(s):
+        if s > 0:
+            return f"+{s} vitórias seguidas"
+        elif s < 0:
+            return f"{abs(s)} derrotas seguidas"
+        return "Neutro"
+
     print(f"\n{'='*60}")
-    print(f"FIGHT PREDICTION - XGBOOST MODEL")
+    print("FIGHT PREDICTION - CALIBRATED XGBOOST + ELO MODEL")
     print(f"{'='*60}")
-    print(f"\n{f1['name']} ({f1['wins']}-{f1['losses']}-{f1['draws']}) - {class1}")
-    print(f"  vs")
-    print(f"{f2['name']} ({f2['wins']}-{f2['losses']}-{f2['draws']}) - {class2}")
+    print(f"\n{f1['name']} ({int(f1['wins'])}-{int(f1['losses'])}-{int(f1.get('draws', 0))}) | Elo: {elo1:.0f} | {format_streak(strk1)} - {class1}")
+    print("  vs")
+    print(f"{f2['name']} ({int(f2['wins'])}-{int(f2['losses'])}-{int(f2.get('draws', 0))}) | Elo: {elo2:.0f} | {format_streak(strk2)} - {class2}")
     print(f"\n{'-'*60}")
     print(f"PREDICTED WINNER: {winner}")
-    print(f"CONFIDENCE: {confidence:.1f}%")
-    print(f"\nProbabilities:")
+    print(f"CONFIDENCE: {confidence:.1f}% (Probabilidade Calibrada)")
+    print("\nProbabilidades:")
     print(f"  {f1['name']}: {prob[1]*100:.1f}%")
     print(f"  {f2['name']}: {prob[0]*100:.1f}%")
     print(f"{'='*60}\n")
     
-    # Matchup analysis
-    print("MATCHUP ANALYSIS:")
-    print(f"\nPhysical advantages:")
-    if f1['height'] > f2['height']:
-        print(f"  - {f1['name']} is {f1['height'] - f2['height']:.1f}cm taller")
-    elif f2['height'] > f1['height']:
-        print(f"  - {f2['name']} is {f2['height'] - f1['height']:.1f}cm taller")
+    print("ANÁLISE ESTATÍSTICA DO CONFRONTO:")
     
-    if f1['reach'] > f2['reach']:
-        print(f"  - {f1['name']} has {f1['reach'] - f2['reach']:.1f}cm more reach")
-    elif f2['reach'] > f1['reach']:
-        print(f"  - {f2['name']} has {f2['reach'] - f1['reach']:.1f}cm more reach")
+    # Momento
+    print(f"\nMomento Competitivo (Sequência):")
+    print(f"  {f1['name']}: {format_streak(strk1)}")
+    print(f"  {f2['name']}: {format_streak(strk2)}")
     
-    print(f"\nWin rate:")
-    print(f"  {f1['name']}: {r_win_rate*100:.1f}%")
-    print(f"  {f2['name']}: {b_win_rate*100:.1f}%")
+    # Elo
+    print(f"\nRating Elo Histórico:")
+    print(f"  {f1['name']}: {elo1:.0f}")
+    print(f"  {f2['name']}: {elo2:.0f}")
+    print(f"  Diferença de Elo: {abs(elo1 - elo2):.0f} pontos a favor de {f1['name'] if elo1 > elo2 else f2['name']}")
     
-    print(f"\nStriking statistics:")
-    print(f"  {f1['name']}: {f1['splm']:.2f} strikes/min | {f1['str_acc']}% accuracy | {f1['str_def']}% defense")
-    print(f"  {f2['name']}: {f2['splm']:.2f} strikes/min | {f2['str_acc']}% accuracy | {f2['str_def']}% defense")
+    # Físico
+    print(f"\nVantagens Físicas:")
+    if pd.notna(f1['height']) and pd.notna(f2['height']):
+        if f1['height'] > f2['height']:
+            print(f"  - {f1['name']} é {f1['height'] - f2['height']:.1f}cm mais alto")
+        elif f2['height'] > f1['height']:
+            print(f"  - {f2['name']} é {f2['height'] - f1['height']:.1f}cm mais alto")
     
-    print(f"\nGrappling statistics:")
-    print(f"  {f1['name']}: {f1['td_avg']:.2f} TD/fight | {f1['td_avg_acc']}% accuracy | {f1['td_def']}% defense")
-    print(f"  {f2['name']}: {f2['td_avg']:.2f} TD/fight | {f2['td_avg_acc']}% accuracy | {f2['td_def']}% defense")
+    if pd.notna(f1['reach']) and pd.notna(f2['reach']):
+        if f1['reach'] > f2['reach']:
+            print(f"  - {f1['name']} tem {f1['reach'] - f2['reach']:.1f}cm de vantagem de envergadura")
+        elif f2['reach'] > f1['reach']:
+            print(f"  - {f2['name']} tem {f2['reach'] - f1['reach']:.1f}cm de vantagem de envergadura")
+    
+    # Striking
+    print(f"\nEstatísticas de Striking:")
+    print(f"  {f1['name']}: {f1['splm']:.2f} golpes/min | {f1['str_acc']:.0f}% precisão | {f1['str_def']:.0f}% defesa")
+    print(f"  {f2['name']}: {f2['splm']:.2f} golpes/min | {f2['str_acc']:.0f}% precisão | {f2['str_def']:.0f}% defesa")
+    
+    # Grappling
+    print(f"\nEstatísticas de Grappling:")
+    print(f"  {f1['name']}: {f1['td_avg']:.2f} quedas/luta | {f1['td_avg_acc']:.0f}% precisão | {f1['td_def']:.0f}% defesa")
+    print(f"  {f2['name']}: {f2['td_avg']:.2f} quedas/luta | {f2['td_avg_acc']:.0f}% precisão | {f2['td_def']:.0f}% defesa")
     print()
+    
+    return {
+        'winner': winner,
+        'confidence': confidence,
+        'prob_f1': prob[1],
+        'prob_f2': prob[0]
+    }
 
 def search_fighter(name):
-    """Search for fighters by name"""
+    """Busca lutadores pelo nome e exibe registro e Elo."""
     results = fighters_df[fighters_df['name'].str.contains(name, case=False, na=False)]
     if results.empty:
-        print(f"No fighter found with '{name}'")
+        print(f"Nenhum lutador encontrado com '{name}'")
     else:
-        print(f"\nFighters found ({len(results)}):")
+        print(f"\nLutadores encontrados ({len(results)}):")
         for idx, fighter in results.iterrows():
             weight_class = get_weight_class(fighter['weight'])
-            print(f"  - {fighter['name']} ({fighter['wins']}-{fighter['losses']}-{fighter['draws']}) - {weight_class}")
+            elo = get_fighter_elo(fighter['name'], elo_ratings)
+            print(f"  - {fighter['name']:<25} ({int(fighter['wins'])}-{int(fighter['losses'])}-{int(fighter.get('draws', 0))}) | Elo: {elo:.0f} | {weight_class}")
 
-# Interactive menu
 if __name__ == "__main__":
     print("="*60)
-    print("UFC FIGHT PREDICTION SYSTEM - XGBOOST")
+    print("UFC FIGHT PREDICTION SYSTEM - CALIBRATED XGBOOST + ELO")
     print("="*60)
     
+    # Demonstração rápida
+    print("\nExecutando teste com Jon Jones vs Stipe Miocic:")
+    predict_fight("Jon Jones", "Stipe Miocic")
+    
     while True:
-        print("\nOptions:")
-        print("1 - Predict fight")
-        print("2 - Search fighter")
-        print("3 - Exit")
+        print("\nOpções:")
+        print("1 - Prever luta")
+        print("2 - Buscar lutador")
+        print("3 - Sair")
         
-        choice = input("\nChoose an option: ").strip()
-        
-        if choice == '1':
-            fighter1 = input("\nFighter 1 name: ").strip()
-            fighter2 = input("Fighter 2 name: ").strip()
-            predict_fight(fighter1, fighter2)
-        
-        elif choice == '2':
-            name = input("\nFighter name: ").strip()
-            search_fighter(name)
-        
-        elif choice == '3':
-            print("\nGoodbye!")
+        try:
+            choice = input("\nEscolha uma opção: ").strip()
+        except EOFError:
             break
-        
+            
+        if choice == '1':
+            fighter1 = input("\nNome do Lutador 1: ").strip()
+            fighter2 = input("Nome do Lutador 2: ").strip()
+            predict_fight(fighter1, fighter2)
+        elif choice == '2':
+            name = input("\nNome para busca: ").strip()
+            search_fighter(name)
+        elif choice == '3':
+            print("\nEncerrando...")
+            break
         else:
-            print("\nInvalid option!")
+            print("\nOpção inválida!")

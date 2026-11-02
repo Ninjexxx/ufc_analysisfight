@@ -1,95 +1,128 @@
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
-import xgboost as xgb
+import pickle
 import warnings
+from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, brier_score_loss
+from sklearn.calibration import CalibratedClassifierCV
+import xgboost as xgb
+
+from calculate_elo import calculate_elo_ratings, save_elo_ratings
+from feature_engineering import FEATURE_COLS, build_training_features, create_symmetric_dataset
+
 warnings.filterwarnings('ignore')
 
-df = pd.read_csv(r"C:\Users\Arthur Santos\.cache\kagglehub\datasets\neelagiriaditya\ufc-datasets-1994-2025\versions\3\UFC.csv")
+def train_and_evaluate():
+    print("="*60)
+    print("1. CALCULANDO ELO HISTÓRICO E CARREGANDO DADOS")
+    print("="*60)
+    elo_ratings, elo_history, df_raw = calculate_elo_ratings()
+    save_elo_ratings(elo_ratings, elo_history, output_dir='data')
+    
+    print(f"Total de lutas brutas: {len(df_raw)}")
+    
+    # 2. Engenharia de Atributos
+    print("\n" + "="*60)
+    print("2. ENGENHARIA DE ATRIBUTOS E LIMPEZA")
+    print("="*60)
+    df_clean = df_raw.dropna(subset=['winner', 'r_name', 'b_name']).copy()
+    df_clean['target'] = (df_clean['winner'] == df_clean['r_name']).astype(int)
+    df_features = build_training_features(df_clean)
+    
+    df_model = df_features[FEATURE_COLS + ['target', 'date']].dropna()
+    print(f"Lutas válidas após limpeza: {len(df_model)}")
+    
+    # 3. Divisão Temporal (Out-of-Time Validation)
+    split_date = '2023-01-01'
+    train_mask = df_model['date'] < split_date
+    test_mask = df_model['date'] >= split_date
+    
+    df_train = df_model[train_mask].copy()
+    df_test = df_model[test_mask].copy()
+    
+    print(f"Lutas de Treino (< {split_date}): {len(df_train)}")
+    print(f"Lutas de Teste (>= {split_date}): {len(df_test)}")
+    
+    # 4. Augmentation para Simetria de Corner (Neutralização de Viés)
+    print("\n" + "="*60)
+    print("3. APLICANDO SIMETRIA DE CORNER NO TREINO (DATA AUGMENTATION)")
+    print("="*60)
+    df_train_sym = create_symmetric_dataset(df_train, FEATURE_COLS)
+    print(f"Total de amostras de treino simétrico: {len(df_train_sym)}")
+    
+    X_train = df_train_sym[FEATURE_COLS]
+    y_train = df_train_sym['target']
+    
+    X_test = df_test[FEATURE_COLS]
+    y_test = df_test['target']
+    
+    # 5. Treinamento do XGBoost Base
+    print("\n" + "="*60)
+    print("4. TREINANDO XGBOOST CLASSIFIER")
+    print("="*60)
+    base_xgb = xgb.XGBClassifier(
+        n_estimators=120,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=3,
+        gamma=0.5,
+        random_state=42,
+        eval_metric='logloss'
+    )
+    base_xgb.fit(X_train, y_train)
+    
+    raw_pred = base_xgb.predict(X_test)
+    raw_prob = base_xgb.predict_proba(X_test)[:, 1]
+    raw_conf = np.maximum(raw_prob, 1 - raw_prob)
+    
+    # 6. Calibração de Probabilidades (Platt Scaling)
+    print("\n" + "="*60)
+    print("5. CALIBRANDO PROBABILIDADES COM CALIBRATEDCLASSIFIERCV")
+    print("="*60)
+    calibrated_model = CalibratedClassifierCV(base_xgb, method='sigmoid', cv=5)
+    calibrated_model.fit(X_train, y_train)
+    
+    cal_pred = calibrated_model.predict(X_test)
+    cal_prob = calibrated_model.predict_proba(X_test)[:, 1]
+    cal_conf = np.maximum(cal_prob, 1 - cal_prob)
+    
+    # 7. Comparativo Estatístico
+    print("\n" + "="*60)
+    print("COMPARATIVO ESTATÍSTICO NO CONJUNTO DE TESTE TEMPORAL (2023-2025)")
+    print("="*60)
+    print(f"{'Métrica':<30} | {'XGBoost Bruto':<15} | {'XGBoost Calibrado':<15}")
+    print("-"*66)
+    print(f"{'Acurácia':<30} | {accuracy_score(y_test, raw_pred):<15.2%} | {accuracy_score(y_test, cal_pred):<15.2%}")
+    print(f"{'AUC-ROC':<30} | {roc_auc_score(y_test, raw_prob):<15.4f} | {roc_auc_score(y_test, cal_prob):<15.4f}")
+    print(f"{'Brier Score (Menor = melhor)':<30} | {brier_score_loss(y_test, raw_prob):<15.4f} | {brier_score_loss(y_test, cal_prob):<15.4f}")
+    print(f"{'Confiança Média':<30} | {raw_conf.mean():<15.1%} | {cal_conf.mean():<15.1%}")
+    print(f"{'% Predições com Confiança >90%':<30} | {(raw_conf > 0.90).mean():<15.1%} | {(cal_conf > 0.90).mean():<15.1%}")
+    print(f"{'% Predições Disputadas (50-60%)':<30} | {((raw_conf >= 0.50) & (raw_conf <= 0.60)).mean():<15.1%} | {((cal_conf >= 0.50) & (cal_conf <= 0.60)).mean():<15.1%}")
+    
+    print("\nClassification Report (Modelo Calibrado):")
+    print(classification_report(y_test, cal_pred, target_names=['Derrota Red', 'Vitória Red']))
+    
+    # Importância de Features
+    importance_df = pd.DataFrame({
+        'feature': FEATURE_COLS,
+        'importance': base_xgb.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print("\nTOP 12 FEATURES MAIS IMPORTANTES:")
+    print("="*60)
+    for idx, row in importance_df.head(12).reset_index().iterrows():
+        print(f"{idx+1:2d}. {row['feature']:<25} ({row['importance']:.4f})")
+    
+    # Salvar modelos
+    with open('ufc_xgboost_model.pkl', 'wb') as f:
+        pickle.dump(calibrated_model, f)
+        
+    with open('ufc_feature_names.pkl', 'wb') as f:
+        pickle.dump(FEATURE_COLS, f)
+        
+    print("\nModelo calibrado salvo em 'ufc_xgboost_model.pkl' com sucesso!")
+    return calibrated_model
 
-print(f"Total fights: {len(df)}")
-
-df['r_win'] = (df['winner'] == df['r_name']).astype(int)
-
-df['win_diff'] = df['r_wins'] - df['b_wins']
-df['loss_diff'] = df['r_losses'] - df['b_losses']
-df['height_diff'] = df['r_height'] - df['b_height']
-df['reach_diff'] = df['r_reach'] - df['b_reach']
-df['weight_diff'] = df['r_weight'] - df['b_weight']
-
-df['r_win_rate'] = df['r_wins'] / (df['r_wins'] + df['r_losses'] + 1)
-df['b_win_rate'] = df['b_wins'] / (df['b_wins'] + df['b_losses'] + 1)
-df['win_rate_diff'] = df['r_win_rate'] - df['b_win_rate']
-
-df['str_acc_diff'] = df['r_str_acc'] - df['b_str_acc']
-df['str_def_diff'] = df['r_str_def'] - df['b_str_def']
-df['td_avg_diff'] = df['r_td_avg'] - df['b_td_avg']
-df['td_def_diff'] = df['r_td_def'] - df['b_td_def']
-df['splm_diff'] = df['r_splm'] - df['b_splm']
-df['sapm_diff'] = df['r_sapm'] - df['b_sapm']
-
-features = [
-    'r_wins', 'r_losses', 'r_height', 'r_weight', 'r_reach',
-    'r_splm', 'r_str_acc', 'r_sapm', 'r_str_def', 
-    'r_td_avg', 'r_td_avg_acc', 'r_td_def', 'r_sub_avg',
-    'b_wins', 'b_losses', 'b_height', 'b_weight', 'b_reach',
-    'b_splm', 'b_str_acc', 'b_sapm', 'b_str_def',
-    'b_td_avg', 'b_td_avg_acc', 'b_td_def', 'b_sub_avg',
-    'win_diff', 'loss_diff', 'height_diff', 'reach_diff', 'weight_diff',
-    'r_win_rate', 'b_win_rate', 'win_rate_diff',
-    'str_acc_diff', 'str_def_diff', 'td_avg_diff', 'td_def_diff',
-    'splm_diff', 'sapm_diff'
-]
-
-df_model = df[features + ['r_win']].dropna()
-
-X = df_model[features]
-y = df_model['r_win']
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-print(f"\nTraining: {len(X_train)} fights")
-print(f"Testing: {len(X_test)} fights")
-
-model = xgb.XGBClassifier(
-    n_estimators=200,
-    max_depth=6,
-    learning_rate=0.1,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42,
-    eval_metric='logloss'
-)
-
-model.fit(X_train, y_train)
-
-y_pred = model.predict(X_test)
-y_pred_proba = model.predict_proba(X_test)[:, 1]
-
-accuracy = accuracy_score(y_test, y_pred)
-auc = roc_auc_score(y_test, y_pred_proba)
-
-print(f"\n{'='*60}")
-print(f"XGBOOST MODEL RESULTS")
-print(f"{'='*60}")
-print(f"Accuracy: {accuracy:.2%}")
-print(f"AUC-ROC: {auc:.4f}")
-print(f"\nClassification Report:")
-print(classification_report(y_test, y_pred, target_names=['Blue Corner', 'Red Corner']))
-
-feature_importance = pd.DataFrame({
-    'feature': features,
-    'importance': model.feature_importances_
-}).sort_values('importance', ascending=False)
-
-print(f"\n{'='*60}")
-print(f"TOP 15 MOST IMPORTANT FEATURES")
-print(f"{'='*60}")
-print(feature_importance.head(15).to_string(index=False))
-
-import pickle
-with open('ufc_xgboost_model.pkl', 'wb') as f:
-    pickle.dump(model, f)
-
-print(f"\nXGBoost model saved as 'ufc_xgboost_model.pkl'")
+if __name__ == '__main__':
+    train_and_evaluate()
