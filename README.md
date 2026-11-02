@@ -2,12 +2,15 @@
 
 <div align="center">
 
+[![English](https://img.shields.io/badge/Language-English-blue.svg)](README.md)
+[![Português](https://img.shields.io/badge/Idioma-Portugu%C3%AAs-green.svg)](README.pt-br.md)
+
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![XGBoost](https://img.shields.io/badge/XGBoost-ML-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Active-success.svg)
 
-**Machine Learning system to predict UFC fight outcomes using XGBoost**
+**Calibrated Machine Learning system to predict UFC fight outcomes using XGBoost and Elo Rating**
 
 [Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Usage](#-usage) • [Model Performance](#-model-performance) • [Documentation](#-documentation)
 
@@ -17,13 +20,14 @@
 
 ## 🎯 Features
 
-- 🤖 **AI-Powered Predictions** - XGBoost machine learning model with 60-65% accuracy
-- 🏆 **Elo Rating System** - Historical Elo ratings calculated for all 2,603 fighters based on fight outcomes
-- ⚖️ **Weight Class Validation** - Prevents unrealistic matchups between distant weight classes
-- 📊 **Detailed Analysis** - Physical advantages, striking stats, grappling stats, and win rates
-- 🔍 **Fighter Search** - Quick search through the entire UFC fighter database
-- 💻 **Interactive CLI** - Easy-to-use command-line interface
-- ✅ **Automated Testing** - Complete test suite for reliability
+- 🤖 **AI-Powered Predictions** - Calibrated XGBoost model (~70.2% out-of-time accuracy across 2,143 test fights)
+- 🏆 **Elo Rating System** - Historical Elo ratings dynamically calculated for 4,581 fighters across 11,441 fights
+- 🔥 **Streak Momentum** - Integrated pre-fight consecutive win/loss streaks
+- ⚖️ **Weight Class Validation** - Enforces UFC division rules to prevent unrealistic cross-weight matchups
+- 📊 **Detailed Matchup Analysis** - Head-to-head physical advantages, striking stats, grappling stats, and win rates
+- 🌐 **Bilingual CLI** - Full support for English and Brazilian Portuguese (`python test_predictions.py --pt`)
+- 🔍 **Fighter Search** - Fast search through the entire UFC database
+- ✅ **Automated Testing** - Complete test suite (6/6 passing tests) validating files, inference, and corner symmetry
 
 ---
 
@@ -40,8 +44,8 @@ pip (Python package manager)
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/ufc-fight-prediction.git
-cd ufc-fight-prediction
+git clone https://github.com/Ninjexxx/ufc_analysisfight.git
+cd ufc_analysisfight
 ```
 
 2. **Install dependencies**
